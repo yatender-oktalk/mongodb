@@ -5,7 +5,6 @@ defmodule Mongo.Monitor do
   use Bitwise
   require Logger
   alias Mongo.ServerDescription
-  alias Mongo.Events.ServerHeartbeatStartedEvent
   alias Mongo.Events.{ServerHeartbeatStartedEvent, ServerHeartbeatFailedEvent,
                       ServerHeartbeatSucceededEvent}
 
@@ -102,19 +101,19 @@ defmodule Mongo.Monitor do
         notify_success(rtt, is_master_reply, conn_pid)
         ServerDescription.from_is_master(last_server_description, rtt, finish_time, is_master_reply)
 
-      {:disconnect, error, _} ->
+      {:error, reason} ->
         if last_server_description.type in [:unknown, :possible_primary] do
-          notify_error(rtt, error, conn_pid)
-          ServerDescription.from_is_master_error(last_server_description, error)
+          notify_error(rtt, reason, conn_pid)
+          ServerDescription.from_is_master_error(last_server_description, reason)
         else
           {result, finish_time, rtt} = call_is_master(conn_pid, opts)
           case result do
             {:ok, is_master_reply} ->
               notify_success(rtt, is_master_reply, conn_pid)
               ServerDescription.from_is_master(last_server_description, rtt, finish_time, is_master_reply)
-            {:disconnect, error, _} ->
-              notify_error(rtt, error, conn_pid)
-              ServerDescription.from_is_master_error(last_server_description, error)
+            {:error, reason} ->
+              notify_error(rtt, reason, conn_pid)
+              ServerDescription.from_is_master_error(last_server_description, reason)
           end
         end
     end

@@ -54,6 +54,73 @@ defmodule Mongo.Topology do
     GenServer.stop(pid)
   end
 
+  # def select_server(topology_pid, opts) do
+  #   GenServer.call(topology_pid, {:select_server, opts})
+  # end
+
+  def select_server(topology_pid, opts \\ []) do
+    type = Keyword.get(opts, :type)
+    with {:ok, servers, slave_ok, mongos?} <-
+    select_servers(topology_pid, type, opts) do
+      if Enum.empty? servers do
+        {:ok, [], slave_ok, mongos?}
+      else
+        with {:ok, connection} = servers |> Enum.take_random(1) |> Enum.at(0)
+        |> get_connection(topology_pid) do
+          {:ok, connection, slave_ok, mongos?}
+        end
+      end
+    end
+  end
+
+  defp select_servers(topology_pid, type, opts) do
+    topology = topology(topology_pid)
+    start_time = System.monotonic_time
+    _select_servers(topology, type, opts, start_time)
+  end
+
+  @sel_timeout 30000
+  defp _select_servers(topology, type, opts, start_time) do
+    with {:ok, servers, slave_ok, mongos?} <- TopologyDescription.select_servers(topology, type, opts) do
+      if Enum.empty? servers do
+        delta_ms = System.convert_time_unit(System.monotonic_time - start_time,
+          :native, :milliseconds)
+        if delta_ms >= @sel_timeout do
+          {:ok, [], slave_ok, mongos?}
+        else
+          try do
+            GenEvent.stream(Mongo.Events, timeout: @sel_timeout - delta_ms)
+            |> Stream.filter(fn
+              %TopologyDescriptionChangedEvent{} -> true
+              _ -> false
+            end)
+            |> List.first()
+          catch
+            :exit, {:timeout, _} ->
+              {:error, :selection_timeout}
+          else
+            evt ->
+              _select_servers(evt.new_description, type, opts, start_time)
+          end
+        end
+      else
+        {:ok, servers, slave_ok, mongos?}
+      end
+    end
+  end
+
+  defp get_connection(server, pid) do
+    if server != nil do
+      with {:ok, connection} = connection_for_address(pid, server) do
+        {:ok, connection}
+      end
+    else
+      {:ok, nil}
+    end
+  end
+
+
+
   ## GenServer Callbacks
 
   # see https://github.com/mongodb/specifications/blob/master/source/server-discovery-and-monitoring/server-discovery-and-monitoring.rst#configuration

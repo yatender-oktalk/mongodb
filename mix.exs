@@ -24,15 +24,19 @@ defmodule Mongodb.Mixfile do
      env: []]
   end
 
-  def applications(:test), do: [:logger, :connection, :db_connection]
-  def applications(_), do: [:logger, :connection, :db_connection]
+  defp applications(:dev), do: [:logger, :connection, :db_connection, :cortex]
+  defp applications(_), do: [:logger, :connection, :db_connection]
 
   defp deps do
-    [{:connection,    "~> 1.0"},
-     {:db_connection, "~> 1.0"},
-     {:poolboy,       ">= 0.0.0", only: :test},
-     {:ex_doc,        ">= 0.0.0", only: :dev},
-     {:earmark,       ">= 0.0.0", only: :dev}]
+    [
+      {:connection,    "~> 1.0"},
+      {:db_connection, "~> 1.1", github: "elixir-ecto/db_connection", ref: "24473f6"},
+      {:poolboy,       ">= 0.0.0", only: :test},
+      {:cortex,        "~> 0.2",   only: [:dev, :test]},
+      {:ex_doc,        ">= 0.0.0", only: :dev},
+      {:earmark,       ">= 0.0.0", only: :dev},
+      {:dialyxir,      "~> 0.5",   only: :dev, runtime: false}
+    ]
   end
 
   defp docs do

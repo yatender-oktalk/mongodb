@@ -104,7 +104,7 @@ defmodule Mongo do
   """
   @spec start_link(Keyword.t) :: {:ok, pid} | {:error, Mongo.Error.t | term}
   def start_link(opts) do
-    Topology.start_link(opts)
+    DBConnection.start_link(Mongo.Protocol, opts)
   end
 
   def child_spec(opts, child_opts \\ []) do
@@ -129,7 +129,7 @@ defmodule Mongo do
     * `:use_cursor` - Use a cursor for a batched response (Default: true)
   """
   @spec aggregate(pid, collection, [BSON.document], Keyword.t) :: cursor
-  def aggregate(topology_pid, coll, pipeline, opts \\ []) do
+  def aggregate(pid, coll, pipeline, opts \\ []) do
     query = [
       aggregate: coll,
       pipeline: pipeline,
@@ -138,16 +138,15 @@ defmodule Mongo do
     ] |> filter_nils
     wv_query = %Query{action: :wire_version}
 
-    with {:ok, conn, _, _} <- select_server(topology_pid, :read, opts),
-         {:ok, version} <- DBConnection.execute(conn, wv_query, [], defaults) do
+    with {:ok, version} <- DBConnection.execute(pid, wv_query, [], defaults) do
       cursor? = version >= 1 and Keyword.get(opts, :use_cursor, true)
       opts = Keyword.drop(opts, ~w(allow_disk_use max_time use_cursor)a)
 
       if cursor? do
         query = query ++ [cursor: filter_nils(%{batchSize: opts[:batch_size]})]
-        aggregation_cursor(topology_pid, "$cmd", query, nil, opts)
+        aggregation_cursor(pid, "$cmd", query, nil, opts)
       else
-        singly_cursor(topology_pid, "$cmd", query, nil, opts)
+        singly_cursor(pid, "$cmd", query, nil, opts)
       end
     end
   end
@@ -169,7 +168,7 @@ defmodule Mongo do
       the document.
   """
   @spec find_one_and_update(pid, collection, BSON.document, BSON.document, Keyword.t) :: result(BSON.document)
-  def find_one_and_update(topology_pid, coll, filter, update, opts \\ []) do
+  def find_one_and_update(pid, coll, filter, update, opts \\ []) do
     modifier_docs(update, :update)
     query = [
       findAndModify:            coll,
@@ -186,8 +185,7 @@ defmodule Mongo do
 
     opts = Keyword.drop(opts, ~w(bypass_document_validation max_time projection return_document sort upsert collation))
 
-    with {:ok, conn, _, _} <- select_server(topology_pid, :read, opts),
-         {:ok, doc} <- direct_command(conn, query, opts), do: {:ok, doc["value"]}
+    with {:ok, doc} <- direct_command(pid, query, opts), do: {:ok, doc["value"]}
   end
 
   @doc """
@@ -209,7 +207,7 @@ defmodule Mongo do
       higher.
   """
   @spec find_one_and_replace(pid, collection, BSON.document, BSON.document, Keyword.t) :: result(BSON.document)
-  def find_one_and_replace(topology_pid, coll, filter, replacement, opts \\ []) do
+  def find_one_and_replace(pid, coll, filter, replacement, opts \\ []) do
     modifier_docs(replacement, :replace)
     query = [
       findAndModify:            coll,
@@ -226,8 +224,7 @@ defmodule Mongo do
 
     opts = Keyword.drop(opts, ~w(bypass_document_validation max_time projection return_document sort upsert collation))
 
-    with {:ok, conn, _, _} <- select_server(topology_pid, :read, opts),
-         {:ok, doc} <- direct_command(conn, query, opts), do: {:ok, doc["value"]}
+    with {:ok, doc} <- direct_command(pid, query, opts), do: {:ok, doc["value"]}
   end
 
   defp should_return_new(:after), do: true
@@ -245,7 +242,7 @@ defmodule Mongo do
     * `:collation` - Optionally specifies a collation to use in MongoDB 3.4 and higher.
   """
   @spec find_one_and_delete(pid, collection, BSON.document, Keyword.t) :: result(BSON.document)
-  def find_one_and_delete(topology_pid, coll, filter, opts \\ []) do
+  def find_one_and_delete(pid, coll, filter, opts \\ []) do
     query = [
       findAndModify: coll,
       query:         filter,
@@ -257,8 +254,7 @@ defmodule Mongo do
     ] |> filter_nils
     opts = Keyword.drop(opts, ~w(max_time projection sort collation))
 
-    with {:ok, conn, _, _} <- select_server(topology_pid, :read, opts),
-         {:ok, doc} <- direct_command(conn, query, opts), do: {:ok, doc["value"]}
+    with {:ok, doc} <- direct_command(pid, query, opts), do: {:ok, doc["value"]}
   end
 
   @doc """
@@ -271,7 +267,7 @@ defmodule Mongo do
     * `:hint` - Hint which index to use for the query
   """
   @spec count(pid, collection, BSON.document, Keyword.t) :: result(non_neg_integer)
-  def count(topology_pid, coll, filter, opts \\ []) do
+  def count(pid, coll, filter, opts \\ []) do
     query = [
       count: coll,
       query: filter,
@@ -283,8 +279,7 @@ defmodule Mongo do
     opts = Keyword.drop(opts, ~w(limit skip hint)a)
 
     # Mongo 2.4 and 2.6 returns a float
-    with {:ok, conn, _, _} <- select_server(topology_pid, :read, opts),
-         {:ok, doc} <- direct_command(conn, query, opts),
+    with {:ok, doc} <- direct_command(pid, query, opts),
          do: {:ok, trunc(doc["n"])}
   end
 
@@ -292,8 +287,8 @@ defmodule Mongo do
   Similar to `count/4` but unwraps the result and raises on error.
   """
   @spec count!(pid, collection, BSON.document, Keyword.t) :: result!(non_neg_integer)
-  def count!(topology_pid, coll, filter, opts \\ []) do
-    bangify(count(topology_pid, coll, filter, opts))
+  def count!(pid, coll, filter, opts \\ []) do
+    bangify(count(pid, coll, filter, opts))
   end
 
   @doc """
@@ -304,7 +299,7 @@ defmodule Mongo do
     * `:max_time` - Specifies a time limit in milliseconds
   """
   @spec distinct(pid, collection, String.t | atom, BSON.document, Keyword.t) :: result([BSON.t])
-  def distinct(topology_pid, coll, field, filter, opts \\ []) do
+  def distinct(pid, coll, field, filter, opts \\ []) do
     query = [
       distinct: coll,
       key: field,
@@ -314,8 +309,7 @@ defmodule Mongo do
 
     opts = Keyword.drop(opts, ~w(max_time))
 
-    with {:ok, conn, _, _} <- select_server(topology_pid, :read, opts),
-         {:ok, doc} <- direct_command(conn, query, opts),
+    with {:ok, doc} <- direct_command(pid, query, opts),
          do: {:ok, doc["values"]}
   end
 
@@ -323,8 +317,8 @@ defmodule Mongo do
   Similar to `distinct/5` but unwraps the result and raises on error.
   """
   @spec distinct!(pid, collection, String.t | atom, BSON.document, Keyword.t) :: result!([BSON.t])
-  def distinct!(topology_pid, coll, field, filter, opts \\ []) do
-    bangify(distinct(topology_pid, coll, field, filter, opts))
+  def distinct!(pid, coll, field, filter, opts \\ []) do
+    bangify(distinct(pid, coll, field, filter, opts))
   end
 
   @doc """
@@ -346,7 +340,7 @@ defmodule Mongo do
     * `:skip` - The number of documents to skip before returning (Default: 0)
   """
   @spec find(pid, collection, BSON.document, Keyword.t) :: cursor
-  def find(topology_pid, coll, filter, opts \\ []) do
+  def find(pid, coll, filter, opts \\ []) do
     query = [
       {"$comment", opts[:comment]},
       {"$maxTimeMS", opts[:max_time]},
@@ -368,9 +362,8 @@ defmodule Mongo do
     opts = if Keyword.get(opts, :cursor_timeout, true), do: opts, else: [{:no_cursor_timeout, true}|opts]
     drop = ~w(comment max_time modifiers sort cursor_type projection cursor_timeout)a
     opts = cursor_type(opts[:cursor_type]) ++ Keyword.drop(opts, drop)
-    with {:ok, conn, slave_ok, _} <- select_server(topology_pid, :read, opts),
-         opts = Keyword.put(opts, :slave_ok, slave_ok),
-         do: cursor(topology_pid, coll, query, select, opts)
+    opts = Keyword.put_new(opts, :type, :read)
+    cursor(pid, coll, query, select, opts)
   end
 
   @doc """
@@ -407,31 +400,28 @@ defmodule Mongo do
   end
 
   @doc false
-  def raw_find(topology_pid, coll, query, select, opts) do
+  def raw_find(conn, coll, query, select, opts) do
     params = [query, select]
     query = %Query{action: :find, extra: coll}
-    with {:ok, conn, _, _} <- select_server(topology_pid, :read, opts),
-         {:ok, reply} <- DBConnection.execute(conn, query, params, defaults(opts)),
+    with {:ok, reply} <- DBConnection.execute(conn, query, params, defaults(opts)),
          :ok <- maybe_failure(reply),
          op_reply(docs: docs, cursor_id: cursor_id, from: from, num: num) = reply,
          do: {:ok, %{from: from, num: num, cursor_id: cursor_id, docs: docs}}
   end
 
   @doc false
-  def get_more(topology_pid, coll, cursor, opts) do
+  def get_more(pid, coll, cursor, opts) do
     query = %Query{action: :get_more, extra: {coll, cursor}}
-    with {:ok, conn, _, _} <- select_server(topology_pid, :read, opts),
-         {:ok, reply} <- DBConnection.execute(conn, query, [], defaults(opts)),
+    with {:ok, reply} <- DBConnection.execute(pid, query, [], defaults(opts)),
          :ok <- maybe_failure(reply),
          op_reply(docs: docs, cursor_id: cursor_id, from: from, num: num) = reply,
          do: {:ok, %{from: from, num: num, cursor_id: cursor_id, docs: docs}}
   end
 
   @doc false
-  def kill_cursors(topology_pid, cursor_ids, opts) do
+  def kill_cursors(pid, cursor_ids, opts) do
     query = %Query{action: :kill_cursors, extra: cursor_ids}
-    with {:ok, conn, _, _} <- select_server(topology_pid, :read, opts),
-         {:ok, :ok} <- DBConnection.execute(conn, query, [], defaults(opts)),
+    with {:ok, :ok} <- DBConnection.execute(pid, query, [], defaults(opts)),
          do: :ok
   end
 
@@ -441,20 +431,19 @@ defmodule Mongo do
   in the document.
   """
   @spec command(pid, BSON.document, Keyword.t) :: result(BSON.document)
-  def command(topology_pid, query, opts \\ []) do
+  def command(pid, query, opts \\ []) do
     rp = ReadPreference.defaults(%{mode: :primary})
     rp_opts = [read_preference: Keyword.get(opts, :read_preference, rp)]
-    with {:ok, conn, _, _} <- select_server(topology_pid, :read, rp_opts),
-         do: direct_command(conn, query, opts)
+    direct_command(pid, query, opts)
   end
 
   @doc false
   @spec direct_command(pid, BSON.document, Keyword.t) :: result(BSON.document)
-  def direct_command(conn, query, opts \\ []) do
+  def direct_command(pid, query, opts \\ []) do
     params = [query]
     query = %Query{action: :command}
 
-    with {:ok, reply} <- DBConnection.execute(conn, query, params,
+    with {:ok, reply} <- DBConnection.execute(pid, query, params,
                                               defaults(opts)) do
       case reply do
         op_reply(flags: flags, docs: [%{"$err" => reason, "code" => code}])
@@ -477,8 +466,8 @@ defmodule Mongo do
   Similar to `command/3` but unwraps the result and raises on error.
   """
   @spec command!(pid, BSON.document, Keyword.t) :: result!(BSON.document)
-  def command!(topology_pid, query, opts \\ []) do
-    bangify(command(topology_pid, query, opts))
+  def command!(pid, query, opts \\ []) do
+    bangify(command(pid, query, opts))
   end
 
   @doc """
@@ -488,14 +477,13 @@ defmodule Mongo do
   will be generated, inserted into the document, and returned in the result struct.
   """
   @spec insert_one(pid, collection, BSON.document, Keyword.t) :: result(Mongo.InsertOneResult.t)
-  def insert_one(topology_pid, coll, doc, opts \\ []) do
+  def insert_one(pid, coll, doc, opts \\ []) do
     assert_single_doc!(doc)
     {[id], [doc]} = assign_ids([doc])
 
     params = [doc]
     query = %Query{action: :insert_one, extra: coll}
-    with {:ok, conn, _, _} <- select_server(topology_pid, :write, opts),
-         {:ok, reply} <- DBConnection.execute(conn, query, params, defaults(opts)),
+    with {:ok, reply} <- DBConnection.execute(pid, query, params, defaults(opts)),
          :ok <- maybe_failure(reply),
          {:ok, _doc} <- get_last_error(reply),
          do: {:ok, %Mongo.InsertOneResult{inserted_id: id}}
@@ -505,8 +493,8 @@ defmodule Mongo do
   Similar to `insert_one/4` but unwraps the result and raises on error.
   """
   @spec insert_one!(pid, collection, BSON.document, Keyword.t) :: result!(Mongo.InsertOneResult.t)
-  def insert_one!(topology_pid, coll, doc, opts \\ []) do
-    bangify(insert_one(topology_pid, coll, doc, opts))
+  def insert_one!(pid, coll, doc, opts \\ []) do
+    bangify(insert_one(pid, coll, doc, opts))
   end
 
   @doc """
@@ -523,7 +511,7 @@ defmodule Mongo do
   """
   # TODO describe the ordered option
   @spec insert_many(pid, collection, [BSON.document], Keyword.t) :: result(Mongo.InsertManyResult.t)
-  def insert_many(topology_pid, coll, docs, opts \\ []) do
+  def insert_many(pid, coll, docs, opts \\ []) do
     assert_many_docs!(docs)
     {ids, docs} = assign_ids(docs)
 
@@ -533,8 +521,7 @@ defmodule Mongo do
 
     params = docs
     query = %Query{action: :insert_many, extra: coll}
-    with {:ok, conn, _, _} <- select_server(topology_pid, :write, opts),
-         {:ok, reply} <- DBConnection.execute(conn, query, params, defaults(opts)),
+    with {:ok, reply} <- DBConnection.execute(pid, query, params, defaults(opts)),
          :ok <- maybe_failure(reply),
          {:ok, _doc} <- get_last_error(reply),
          ids = index_map(ids, 0, %{}),
@@ -545,19 +532,18 @@ defmodule Mongo do
   Similar to `insert_many/4` but unwraps the result and raises on error.
   """
   @spec insert_many!(pid, collection, [BSON.document], Keyword.t) :: result!(Mongo.InsertManyResult.t)
-  def insert_many!(topology_pid, coll, docs, opts \\ []) do
-    bangify(insert_many(topology_pid, coll, docs, opts))
+  def insert_many!(pid, coll, docs, opts \\ []) do
+    bangify(insert_many(pid, coll, docs, opts))
   end
 
   @doc """
   Remove a document matching the filter from the collection.
   """
   @spec delete_one(pid, collection, BSON.document, Keyword.t) :: result(Mongo.DeleteResult.t)
-  def delete_one(topology_pid, coll, filter, opts \\ []) do
+  def delete_one(pid, coll, filter, opts \\ []) do
     params = [filter]
     query = %Query{action: :delete_one, extra: coll}
-    with {:ok, conn, _, _} <- select_server(topology_pid, :write, opts),
-         {:ok, reply} <- DBConnection.execute(conn, query, params, defaults(opts)),
+    with {:ok, reply} <- DBConnection.execute(pid, query, params, defaults(opts)),
          :ok <- maybe_failure(reply),
          {:ok, %{"n" => n}} <- get_last_error(reply),
          do: {:ok, %Mongo.DeleteResult{deleted_count: n}}
@@ -567,19 +553,18 @@ defmodule Mongo do
   Similar to `delete_one/4` but unwraps the result and raises on error.
   """
   @spec delete_one!(pid, collection, BSON.document, Keyword.t) :: result!(Mongo.DeleteResult.t)
-  def delete_one!(topology_pid, coll, filter, opts \\ []) do
-    bangify(delete_one(topology_pid, coll, filter, opts))
+  def delete_one!(pid, coll, filter, opts \\ []) do
+    bangify(delete_one(pid, coll, filter, opts))
   end
 
   @doc """
   Remove all documents matching the filter from the collection.
   """
   @spec delete_many(pid, collection, BSON.document, Keyword.t) :: result(Mongo.DeleteResult.t)
-  def delete_many(topology_pid, coll, filter, opts \\ []) do
+  def delete_many(pid, coll, filter, opts \\ []) do
     params = [filter]
     query = %Query{action: :delete_many, extra: coll}
-    with {:ok, conn, _, _} <- select_server(topology_pid, :write, opts),
-         {:ok, reply} <- DBConnection.execute(conn, query, params, defaults(opts)),
+    with {:ok, reply} <- DBConnection.execute(pid, query, params, defaults(opts)),
          :ok <- maybe_failure(reply),
          {:ok, %{"n" => n}} <- get_last_error(reply),
          do: {:ok, %Mongo.DeleteResult{deleted_count: n}}
@@ -589,8 +574,8 @@ defmodule Mongo do
   Similar to `delete_many/4` but unwraps the result and raises on error.
   """
   @spec delete_many!(pid, collection, BSON.document, Keyword.t) :: result!(Mongo.DeleteResult.t)
-  def delete_many!(topology_pid, coll, filter, opts \\ []) do
-    bangify(delete_many(topology_pid, coll, filter, opts))
+  def delete_many!(pid, coll, filter, opts \\ []) do
+    bangify(delete_many(pid, coll, filter, opts))
   end
 
   @doc """
@@ -602,13 +587,12 @@ defmodule Mongo do
       matches the filter (default: `false`)
   """
   @spec replace_one(pid, collection, BSON.document, BSON.document, Keyword.t) :: result(Mongo.UpdateResult.t)
-  def replace_one(topology_pid, coll, filter, replacement, opts \\ []) do
+  def replace_one(pid, coll, filter, replacement, opts \\ []) do
     modifier_docs(replacement, :replace)
 
     params = [filter, replacement]
     query = %Query{action: :replace_one, extra: coll}
-    with {:ok, conn, _, _} <- select_server(topology_pid, :write, opts),
-         {:ok, reply} <- DBConnection.execute(conn, query, params, defaults(opts)),
+    with {:ok, reply} <- DBConnection.execute(pid, query, params, defaults(opts)),
          :ok <- maybe_failure(reply),
          {:ok, doc} <- get_last_error(reply) do
       case doc do
@@ -624,8 +608,8 @@ defmodule Mongo do
   Similar to `replace_one/5` but unwraps the result and raises on error.
   """
   @spec replace_one!(pid, collection, BSON.document, BSON.document, Keyword.t) :: result!(Mongo.UpdateResult.t)
-  def replace_one!(topology_pid, coll, filter, replacement, opts \\ []) do
-    bangify(replace_one(topology_pid, coll, filter, replacement, opts))
+  def replace_one!(pid, coll, filter, replacement, opts \\ []) do
+    bangify(replace_one(pid, coll, filter, replacement, opts))
   end
 
   @doc """
@@ -648,13 +632,12 @@ defmodule Mongo do
       matches the filter (default: `false`)
   """
   @spec update_one(pid, collection, BSON.document, BSON.document, Keyword.t) :: result(Mongo.UpdateResult.t)
-  def update_one(topology_pid, coll, filter, update, opts \\ []) do
+  def update_one(pid, coll, filter, update, opts \\ []) do
     modifier_docs(update, :update)
 
     params = [filter, update]
     query = %Query{action: :update_one, extra: coll}
-    with {:ok, conn, _, _} <- select_server(topology_pid, :write, opts),
-         {:ok, reply} <- DBConnection.execute(conn, query, params, defaults(opts)),
+    with {:ok, reply} <- DBConnection.execute(pid, query, params, defaults(opts)),
          :ok <- maybe_failure(reply),
          {:ok, doc} <- get_last_error(reply) do
       case doc do
@@ -670,8 +653,8 @@ defmodule Mongo do
   Similar to `update_one/5` but unwraps the result and raises on error.
   """
   @spec update_one!(pid, collection, BSON.document, BSON.document, Keyword.t) :: result!(Mongo.UpdateResult.t)
-  def update_one!(topology_pid, coll, filter, update, opts \\ []) do
-    bangify(update_one(topology_pid, coll, filter, update, opts))
+  def update_one!(pid, coll, filter, update, opts \\ []) do
+    bangify(update_one(pid, coll, filter, update, opts))
   end
 
   @doc """
@@ -687,13 +670,12 @@ defmodule Mongo do
       matches the filter (default: `false`)
   """
   @spec update_many(pid, collection, BSON.document, BSON.document, Keyword.t) :: result(Mongo.UpdateResult.t)
-  def update_many(topology_pid, coll, filter, update, opts \\ []) do
+  def update_many(pid, coll, filter, update, opts \\ []) do
     modifier_docs(update, :update)
 
     params = [filter, update]
     query = %Query{action: :update_many, extra: coll}
-    with {:ok, conn, _, _} <- select_server(topology_pid, :write, opts),
-         {:ok, reply} <- DBConnection.execute(conn, query, params, defaults(opts)),
+    with {:ok, reply} <- DBConnection.execute(pid, query, params, defaults(opts)),
          :ok <- maybe_failure(reply),
          {:ok, doc} <- get_last_error(reply) do
       case doc do
@@ -709,59 +691,59 @@ defmodule Mongo do
   Similar to `update_many/5` but unwraps the result and raises on error.
   """
   @spec update_many!(pid, collection, BSON.document, BSON.document, Keyword.t) :: result!(Mongo.UpdateResult.t)
-  def update_many!(topology_pid, coll, filter, update, opts \\ []) do
-    bangify(update_many(topology_pid, coll, filter, update, opts))
+  def update_many!(pid, coll, filter, update, opts \\ []) do
+    bangify(update_many(pid, coll, filter, update, opts))
   end
 
-  def select_server(topology_pid, type, opts \\ []) do
-    with {:ok, servers, slave_ok, mongos?} <-
-           select_servers(topology_pid, type, opts) do
-      if Enum.empty? servers do
-        {:ok, [], slave_ok, mongos?}
-      else
-        with {:ok, connection} = servers |> Enum.take_random(1) |> Enum.at(0)
-                                         |> get_connection(topology_pid) do
-          {:ok, connection, slave_ok, mongos?}
-        end
-      end
-    end
-  end
+  # def select_server(topology_pid, type, opts \\ []) do
+  #   with {:ok, servers, slave_ok, mongos?} <-
+  #          select_servers(topology_pid, type, opts) do
+  #     if Enum.empty? servers do
+  #       {:ok, [], slave_ok, mongos?}
+  #     else
+  #       with {:ok, connection} = servers |> Enum.take_random(1) |> Enum.at(0)
+  #                                        |> get_connection(topology_pid) do
+  #         {:ok, connection, slave_ok, mongos?}
+  #       end
+  #     end
+  #   end
+  # end
 
-  defp select_servers(topology_pid, type, opts) do
-    topology = Topology.topology(topology_pid)
-    start_time = System.monotonic_time
-    _select_servers(topology, type, opts, start_time)
-  end
+  # defp select_servers(topology_pid, type, opts) do
+  #   topology = Topology.topology(topology_pid)
+  #   start_time = System.monotonic_time
+  #   _select_servers(topology, type, opts, start_time)
+  # end
 
-  @sel_timeout 30000
-  defp _select_servers(topology, type, opts, start_time) do
-    with {:ok, servers, slave_ok, mongos?} <- TopologyDescription.select_servers(topology, type, opts) do
-      if Enum.empty? servers do
-        delta_ms = System.convert_time_unit(System.monotonic_time - start_time,
-                                            :native, :milliseconds)
-        if delta_ms >= @sel_timeout do
-          {:ok, [], slave_ok, mongos?}
-        else
-          try do
-            GenEvent.stream(Mongo.Events, timeout: @sel_timeout - delta_ms)
-            |> Stream.filter(fn
-              %TopologyDescriptionChangedEvent{} -> true
-              _ -> false
-            end)
-            |> Enum.at(0)
-          catch
-            :exit, {:timeout, _} ->
-              {:error, :selection_timeout}
-          else
-            evt ->
-              _select_servers(evt.new_description, type, opts, start_time)
-          end
-        end
-      else
-        {:ok, servers, slave_ok, mongos?}
-      end
-    end
-  end
+  # @sel_timeout 30000
+  # defp _select_servers(topology, type, opts, start_time) do
+  #   with {:ok, servers, slave_ok, mongos?} <- TopologyDescription.select_servers(topology, type, opts) do
+  #     if Enum.empty? servers do
+  #       delta_ms = System.convert_time_unit(System.monotonic_time - start_time,
+  #                                           :native, :milliseconds)
+  #       if delta_ms >= @sel_timeout do
+  #         {:ok, [], slave_ok, mongos?}
+  #       else
+  #         try do
+  #           GenEvent.stream(Mongo.Events, timeout: @sel_timeout - delta_ms)
+  #           |> Stream.filter(fn
+  #             %TopologyDescriptionChangedEvent{} -> true
+  #             _ -> false
+  #           end)
+  #           |> Enum.at(0)
+  #         catch
+  #           :exit, {:timeout, _} ->
+  #             {:error, :selection_timeout}
+  #         else
+  #           evt ->
+  #             _select_servers(evt.new_description, type, opts, start_time)
+  #         end
+  #       end
+  #     else
+  #       {:ok, servers, slave_ok, mongos?}
+  #     end
+  #   end
+  # end
 
   defp get_connection(server, pid) do
     if server != nil do
