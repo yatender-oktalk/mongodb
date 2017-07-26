@@ -54,14 +54,9 @@ defmodule Mongo.Topology do
     GenServer.stop(pid)
   end
 
-  # def select_server(topology_pid, opts) do
-  #   GenServer.call(topology_pid, {:select_server, opts})
-  # end
-
   def select_server(topology_pid, opts \\ []) do
     type = Keyword.get(opts, :type)
-    with {:ok, servers, slave_ok, mongos?} <-
-    select_servers(topology_pid, type, opts) do
+    with {:ok, servers, slave_ok, mongos?} <- select_servers(topology_pid, type, opts) do
       if Enum.empty? servers do
         {:ok, [], slave_ok, mongos?}
       else
@@ -94,6 +89,8 @@ defmodule Mongo.Topology do
               %TopologyDescriptionChangedEvent{} -> true
               _ -> false
             end)
+            |> Stream.take(1)
+            |> Enum.to_list()
             |> List.first()
           catch
             :exit, {:timeout, _} ->

@@ -182,13 +182,22 @@ defmodule Mongo.Protocol do
   end
 
   defp handle_execute(:find, coll, [query, select], opts, s) do
-    flags      = Keyword.take(opts, @find_flags)
+    flags      =
+      opts
+      |> Keyword.take(@find_flags)
+      |> Keyword.put(:slave_ok, slave_ok?(opts))
     num_skip   = Keyword.get(opts, :skip, 0)
     num_return = Keyword.get(opts, :batch_size, 0)
 
     op_query(coll: Utils.namespace(coll, s, opts[:database]), query: query, select: select,
              num_skip: num_skip, num_return: num_return, flags: flags(flags))
     |> message_reply(s)
+  end
+
+  defp slave_ok?(opts) do
+    rp = Keyword.get(opts, :read_preference, Mongo.ReadPreference.defaults())
+
+    rp.mode in [:secondary, :secondary_preferred]
   end
 
   defp handle_execute(:get_more, {coll, cursor_id}, [], opts, s) do

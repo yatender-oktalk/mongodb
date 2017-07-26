@@ -497,7 +497,7 @@ defmodule Mongo.Test do
 
   # issue #19
   test "correctly pass options to cursor", c do
-    assert %Mongo.Cursor{opts: [slave_ok: true, no_cursor_timeout: true,
+    assert %Mongo.Cursor{opts: [type: :read, no_cursor_timeout: true,
                                 skip: 10], coll: "coll"} =
              Mongo.find(c.pid, "coll", %{}, skip: 10, cursor_timeout: false)
   end

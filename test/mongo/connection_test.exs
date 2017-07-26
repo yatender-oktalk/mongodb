@@ -63,7 +63,7 @@ defmodule Mongo.ConnectionTest do
 
     capture_log fn ->
       assert {:ok, pid} = Mongo.start_link(opts)
-      assert_receive {:EXIT, ^pid, {%Mongo.Error{code: 18}, _}}
+      assert_receive {:EXIT, _topology_pid, {%Mongo.Error{code: 18}, _}}
     end
   end
 
@@ -76,7 +76,7 @@ defmodule Mongo.ConnectionTest do
 
     capture_log fn ->
       assert {:ok, pid} = Mongo.start_link(opts)
-      assert_receive {:EXIT, ^pid, {%Mongo.Error{code: 18}, _}}
+      assert_receive {:EXIT, _topology_pid, {%Mongo.Error{code: 18}, _}}
     end
   end
 

@@ -295,7 +295,7 @@ defmodule Mongo.TopologyDescription do
         {[], topology}
       type when type in [:rs_ghost, :standalone, :rs_primary, :rs_secondary,
                          :rs_arbiter, :rs_other] ->
- 	      {_, new_topology} = pop_in(topology.servers[server_description.address])
+        {_, new_topology} = pop_in(topology.servers[server_description.address])
           {[], new_topology}
         _ ->
           {[], topology}
@@ -308,7 +308,7 @@ defmodule Mongo.TopologyDescription do
       type when type in [:unknown, :rs_ghost] ->
         {[], topology}
       type when type in [:standalone, :mongos] ->
- 	      {_, new_topology} = pop_in(topology.servers[server_description.address])
+        {_, new_topology} = pop_in(topology.servers[server_description.address])
         {[], new_topology}
       :rs_primary ->
         update_rs_from_primary(topology, server_description)
@@ -356,7 +356,7 @@ defmodule Mongo.TopologyDescription do
       if num_seeds == 1 do
         {[], Map.put(topology, :type, :single)}
       else
- 	      {_, new_topology} = pop_in(topology.servers[server_description.address])
+        {_, new_topology} = pop_in(topology.servers[server_description.address])
         {[], new_topology}
       end
     end
@@ -367,7 +367,7 @@ defmodule Mongo.TopologyDescription do
       {[], topology}
     else
       if invalid_set_name?(topology, server_description) do
- 	      {_, new_topology} = pop_in(topology.servers[server_description.address])
+        {_, new_topology} = pop_in(topology.servers[server_description.address])
         {[], new_topology}
       else
         {actions, topology} =
@@ -410,7 +410,7 @@ defmodule Mongo.TopologyDescription do
       {[], topology}
     else
       topology = if invalid_set_name?(topology, server_description) do
- 	      {_, new_topology} = pop_in(topology.servers[server_description.address])
+        {_, new_topology} = pop_in(topology.servers[server_description.address])
         new_topology
       else
         topology

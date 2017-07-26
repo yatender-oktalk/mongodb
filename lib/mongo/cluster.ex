@@ -3,8 +3,6 @@ defmodule Mongo.Cluster do
 
   @behaviour DBConnection.Pool
 
-  @default_pool_module DBConnection.Connection
-
   alias Mongo.{ConnectionError, Protocol, Topology}
 
   defstruct [
@@ -14,12 +12,12 @@ defmodule Mongo.Cluster do
   ]
 
   def ensure_all_started(opts, type) do
-    {pool_module, opts} = Keyword.pop(opts, :underlying_pool, @default_pool_module)
+    {pool_module, opts} = Keyword.pop(opts, :underlying_pool)
     pool_module.ensure_all_started(opts, type)
   end
 
   def start_link(Protocol, opts) do
-    {pool_module, opts} = Keyword.pop(opts, :underlying_pool, @default_pool_module)
+    {pool_module, opts} = Keyword.pop(opts, :underlying_pool)
     {name, opts} = Keyword.pop(opts, :name)
     opts = Keyword.put(opts, :pool, pool_module)
     {:ok, topology_pid} = Topology.start_link(opts)
@@ -62,10 +60,8 @@ defmodule Mongo.Cluster do
     %{pool_module: pool_module} = state
 
     case Topology.select_server(state.topology_pid, opts) do
-      {:ok, conn, _slave_ok, _mongos?} ->
+      {:ok, conn, _slave_ok, _mongos} ->
         {:reply, {:ok, conn, pool_module}, state}
-      {:error, reason} ->
-        {:reply, {:error, ConnectionError.new("checkout", reason)}, state}
     end
   end
 end

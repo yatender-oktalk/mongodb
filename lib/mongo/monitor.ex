@@ -81,6 +81,7 @@ defmodule Mongo.Monitor do
 
   defp call_is_master(conn_pid, opts) do
     start_time = System.monotonic_time
+    opts = Keyword.put(opts, :pool, DBConnection.Connection)
     result = Mongo.direct_command(conn_pid, %{isMaster: 1}, opts)
     finish_time = System.monotonic_time
     rtt = System.convert_time_unit(finish_time - start_time, :native, :milli_seconds)
